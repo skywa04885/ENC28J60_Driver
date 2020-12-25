@@ -1,0 +1,6 @@
+{
+    "AVR.source.compiler": "/bin/avr-gcc",
+    "AVR.programmer.tool": "/bin/avrdude",
+    "AVR.source.libraries": [],
+    "AVR.device.type": "atmega2560"
+}
