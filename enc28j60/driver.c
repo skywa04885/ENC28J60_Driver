@@ -1,6 +1,8 @@
 #include "driver.h"
 #include "registers.h"
 
+static uint8_t __driver_pkt_buff[256];
+
 /**************************************************
  * AVR Hardware Functions
  **************************************************/
@@ -110,6 +112,17 @@ uint8_t enc28j60_eth_rcr(uint8_t reg)
     return res;
 }
 
+void enc28j60_rbm(uint8_t *data, uint16_t len)
+{
+    spi_select();
+
+    spi_transceive((ENC28J60_RBM << 5) | 0x1A);
+    for (uint16_t i = 0; i < len; ++i)
+        data[i] = spi_transceive(0xFF);
+
+    spi_deselect();
+}
+
 void enc28j60_src()
 {
     spi_select();
@@ -208,6 +221,9 @@ void enc28j60_init(enc28j60_driver_cfg_t *cfg)
     enc28j60_wait_clkrdy();
     enc28j60_src();
 
+    // Disable RX
+    enc28j60_rx_disable();
+
     // Performs ENC28J60 default initialization
     enc28j60_rx_init();
     enc28j60_filter_init();
@@ -219,6 +235,9 @@ void enc28j60_init(enc28j60_driver_cfg_t *cfg)
     enc28j60_set_led_stretch_time(ENC28J60_PHLCON_LFRQ_MSTRCH);
     enc28j60_set_led_a_mode(ENC28J60_PHLCON_LACFG_DISPLAY_RX_ACTIVITY);
     enc28j60_set_led_b_mode(ENC28J60_PHLCON_LACFG_DISPLAY_TX_ACTIVITY);
+
+    // Enables RX
+    enc28j60_rx_enable();
 }
 
 void enc28j60_wait_clkrdy()
@@ -346,17 +365,15 @@ void enc28j60_rx_init()
     // Sets the RX BUffer end, half of buffer by default
     enc28j60_wcr(ENC28J60_BK0_ERXNDL, (uint8_t) ENC28J60_RXBUFF_END);
     enc28j60_wcr(ENC28J60_BK0_ERXNDH, (uint8_t) (ENC28J60_RXBUFF_END >> 8));
+
+    // Sets the initial hardware write position
+    enc28j60_wcr(ENC28J60_BK0_ERXRDPTH, 0x00);
+    enc28j60_wcr(ENC28J60_BK0_ERXRDPTL, 0x00);
 }
 
 void enc28j60_filter_init()
 {
     enc28j60_bank_select(ENC28J60_BANK_1);
-
-    register uint8_t reg = _BV(ENC28J60_BK1_ERXFCON_ANDOR)  // Reject packet, unless all filters accept
-        | _BV(ENC28J60_BK1_ERXFCON_CRCEN)                   // Reject packet, if CRC invalid
-        | _BV(ENC28J60_BK1_ERXFCON_UCEN);                   // Reject packet, if we're not target MAC
-
-    enc28j60_wcr(ENC28J60_BK1_ERXFCON, reg);
 }
 
 void enc28j60_phy_init(enc28j60_driver_cfg_t *cfg)
@@ -384,6 +401,16 @@ void enc28j60_phy_init(enc28j60_driver_cfg_t *cfg)
         reg |= _BV(ENC28J60_PHY_PHCON2_HDLDIS);
         enc28j60_phy_write(ENC28J60_PHY_PHCON2, reg);
     }
+}
+
+void enc28j60_rx_disable()
+{
+    enc28j60_bfc(ECON1, _BV(ECON1_RXEN));
+}
+
+void enc28j60_rx_enable()
+{
+    enc28j60_bfs(ECON1, _BV(ECON1_RXEN));
 }
 
 void enc28j60_bank_select(enc28j60_bank_t bank)
@@ -466,7 +493,7 @@ void enc28j60_set_led_b_mode(enc28j60_phlcon_lacfg_t mode)
     enc28j60_phy_write(ENC28J60_PHY_PHLCON, reg);
 }
 
-void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
+void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet, uint16_t len)
 {
     register uint8_t reg;
     uint16_t reg16;
@@ -480,8 +507,8 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
     //  recommended that an even address be used for
     //  ETXST.
 
-    enc28j60_wcr(ENC28J60_ETXSTL, (uint8_t) ENC28J60_TXBUFF_START);
-    enc28j60_wcr(ENC28J60_ETXSTH, (uint8_t) (ENC28J60_TXBUFF_START >> 8));
+    enc28j60_wcr(ENC28J60_BK0_ETXSTL, (uint8_t) ENC28J60_TXBUFF_START);
+    enc28j60_wcr(ENC28J60_BK0_ETXSTH, (uint8_t) (ENC28J60_TXBUFF_START >> 8));
 
     // 2. Use the WBM SPI command to write the per
     //  packet control byte, the destination address, the
@@ -489,21 +516,19 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
     //  data payload.
 
     // Sets AUTOINC in ECON2
-    reg = enc28j60_eth_rcr(ECON2);
-    reg |= _BV(ECON2_AUTOINC);
-    enc28j60_wcr(ECON2, reg);
+    enc28j60_bfs(ECON2, ECON2_AUTOINC);
 
     // Writes the Write-Start address to EWRPTL, this will increment each
     //  buffer write
-    enc28j60_wcr(ENC28J60_EWRPTL, (uint8_t) ENC28J60_TXBUFF_START);
-    enc28j60_wcr(ENC28J60_EWRPTH, (uint8_t) (ENC28J60_TXBUFF_START >> 8));
+    enc28j60_wcr(ENC28J60_BK0_EWRPTL, (uint8_t) ENC28J60_TXBUFF_START);
+    enc28j60_wcr(ENC28J60_BK0_EWRPTH, (uint8_t) (ENC28J60_TXBUFF_START >> 8));
 
     // Writes the packet
     enc28j60_wbm((uint8_t *) &packet->cb, 1);                   // 1. Control Byte
     enc28j60_wbm((uint8_t *) &packet->data.da, 6);              // 2. Destination
     enc28j60_wbm((uint8_t *) &packet->data.sa, 6);              // 3. Source
-    enc28j60_wbm((uint8_t *) &packet->data.len, 2);             // 4. Type/Len
-    enc28j60_wbm(packet->data.payload, packet->data.len);       // 5. Payload ( Variable Length )
+    enc28j60_wbm((uint8_t *) &packet->data.type, 2);            // 4. Type
+    enc28j60_wbm(packet->data.payload, len);                    // 5. Payload ( Variable Length )
 
     // 3. Appropriately program the ETXND Pointer. It
     //  should point to the last byte in the data payload.
@@ -514,9 +539,9 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
     //  and by reading it's value, and removing 1 from it, we will get the address
     //  of the final byte in the packet
 
-    reg16 = enc28j60_eth_rcr(ENC28J60_EWRPTH);
+    reg16 = enc28j60_eth_rcr(ENC28J60_BK0_EWRPTH);
     reg16 <<= 8;
-    reg16 |= enc28j60_eth_rcr(ENC28J60_EWRPTL);
+    reg16 |= enc28j60_eth_rcr(ENC28J60_BK0_EWRPTL);
     reg16 -= 1;
 
     /*
@@ -527,8 +552,8 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
 
     // Stores the address inside the ETXND pointer
 
-    enc28j60_wcr(ENC28J60_ETXNDL, (uint8_t) reg16);
-    enc28j60_wcr(ENC28J60_ETXNDH, (uint8_t) (reg16 >> 8));
+    enc28j60_wcr(ENC28J60_BK0_ETXNDL, (uint8_t) reg16);
+    enc28j60_wcr(ENC28J60_BK0_ETXNDH, (uint8_t) (reg16 >> 8));
 
     // 4. Clear EIR.TXIF, set EIE.TXIE and set EIE.INTIE
     //  to enable an interrupt when done (if desired).
@@ -547,4 +572,95 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet)
         reg = enc28j60_eth_rcr(ECON1);
         if (!(reg & _BV(ECON1_TXRTS))) break;
     }
+}
+
+uint8_t enc28j60_get_packet_count()
+{
+    register uint8_t reg;
+
+    enc28j60_bank_select(ENC28J60_BANK_1);
+    reg = enc28j60_eth_rcr(ENC28J60_BK1_EPKTCNT);
+
+    return reg;
+}
+
+enc28j60_err_t enc28j60_read_packet(enc28j60_ethernet_packet_t *packet)
+{
+    register uint8_t reg;
+    uint16_t reg16, rx_buffer_rp, next_packet_pointer;
+    enc28j60_receive_status_vector_t status_vec;
+
+    // Checks if there are any packets available
+    if (enc28j60_get_packet_count() == 0) return ENC28J60_NO_PKT_AVAILABLE;
+
+    // Selects bank 0
+    enc28j60_bank_select(ENC28J60_BANK_0);
+
+    // Gets the packet read position
+    rx_buffer_rp = enc28j60_eth_rcr(ENC28J60_BK0_ERXRDPTH);
+    rx_buffer_rp <<= 8;
+    rx_buffer_rp |= enc28j60_eth_rcr(ENC28J60_BK0_ERXRDPTL);
+
+    // Sets AUTOINC in ECON2
+    enc28j60_bfs(ECON2, ECON2_AUTOINC);
+
+    // Sets ERDPT this will increment each read
+    enc28j60_wcr(ENC28J60_BK0_ERDPTL, (uint8_t) rx_buffer_rp);
+    enc28j60_wcr(ENC28J60_BK0_ERDPTH, (uint8_t) (rx_buffer_rp >> 8));
+
+    printf("%u\n", rx_buffer_rp);
+
+    printf("%u\n", enc28j60_eth_rcr(ENC28J60_BK0_ERDPTL));
+    printf("%u\n", enc28j60_eth_rcr(ENC28J60_BK0_ERDPTH));
+
+    // Read the headers, the next packet pointer, and the status vector
+    enc28j60_rbm((uint8_t *) &next_packet_pointer, 2);
+    enc28j60_rbm((uint8_t *) &status_vec, sizeof (enc28j60_receive_status_vector_t));
+    printf("Next packet pointer: %u\n", next_packet_pointer);
+    printf("Data size: %u\n", status_vec.rbc);
+
+    // Reads the body
+    enc28j60_rbm(packet->data.payload, status_vec.rbc);
+
+    for (;;);
+
+    return ENC28J60_OK;
+}
+
+
+void enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip)
+{
+    enc28j60_ethernet_packet_t *ethernet_packet = (enc28j60_ethernet_packet_t *) __driver_pkt_buff;
+    enc28j60_arp_packet_t *arp_packet = (enc28j60_arp_packet_t *) ethernet_packet->data.payload;
+
+    // Configures the ETHERNET packet
+    memcpy(ethernet_packet->data.sa, cfg->mac, 6);
+    memset(ethernet_packet->data.da, 0xFF, 6);
+    ethernet_packet->data.type = HTON16(ENC28J60_ETHERNET_PACKET_TYPE_ARP);
+
+    // Configures the ARP Packet
+    arp_packet->op = HTON16(ENC28J60_ARP_PACKET_OP_REQUEST);
+    arp_packet->hrd = HTON16(0x0001);       /* Ethernet */
+    arp_packet->pro = HTON16(0x0800);       /* IPv4 */
+
+    arp_packet->hln = 6;                    /* MAC Addr */
+    arp_packet->pln = 4;                    /* IPv4 Addr */
+
+    memset(arp_packet->tha, 0xFF, 6);       /* Target Hardware Address ( Unknown, Broadcast ) */
+    memcpy(arp_packet->tpa, ip, 4);         /* Target Protocol address ( Known ) */
+    
+    memcpy(arp_packet->sha, cfg->mac, 6);   /* Source Hardware Address */
+    memcpy(arp_packet->spa, cfg->ipv4, 4);  /* Source Prototol Address */
+
+    // Sends the packet
+    enc28j60_write_packet(ethernet_packet, sizeof (enc28j60_arp_packet_t));
+}
+
+/**************************************************
+ * Data Printing Prototypes
+ **************************************************/
+
+void print_mac(uint8_t *mac, FILE *ofstream)
+{
+    fprintf(ofstream, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }

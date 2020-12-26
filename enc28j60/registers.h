@@ -167,6 +167,10 @@
 #define ENC28J60_BK1_ERXFCON_MCEN       1
 #define ENC28J60_BK1_ERXFCON_BCEN       0
 
+/* EPKTCNT*/
+
+#define ENC28J60_BK1_EPKTCNT            0x19
+
 /**************************************************
  * Control Registers ( Bank 0 )
  **************************************************/
@@ -181,18 +185,33 @@
 
 /* ETXST */
 
-#define ENC28J60_ETXSTL                 0x04
-#define ENC28J60_ETXSTH                 0x05
+#define ENC28J60_BK0_ETXSTL                 0x04
+#define ENC28J60_BK0_ETXSTH                 0x05
 
 /* ETXND */
 
-#define ENC28J60_ETXNDL                 0x06
-#define ENC28J60_ETXNDH                 0x07
+#define ENC28J60_BK0_ETXNDL                 0x06
+#define ENC28J60_BK0_ETXNDH                 0x07
 
 /* EWRPT */
 
-#define ENC28J60_EWRPTL                 0x02
-#define ENC28J60_EWRPTH                 0x03
+#define ENC28J60_BK0_EWRPTL                 0x02
+#define ENC28J60_BK0_EWRPTH                 0x03
+
+/* ERDPT */
+
+#define ENC28J60_BK0_ERDPTL                 0x00
+#define ENC28J60_BK0_ERDPTH                 0x01
+
+/* ERXWRPT */
+
+#define ENC28J60_BK0_ERXWRPTL               0x0E
+#define ENC28J60_BK0_ERXWRPTH               0x0F
+
+/* ERXRDPT */
+
+#define ENC28J60_BK0_ERXRDPTL               0x0C
+#define ENC28J60_BK0_ERXRDPTH               0x0D
 
 /**************************************************
  * PHY Registers

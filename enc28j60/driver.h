@@ -21,9 +21,17 @@
 #endif
 
 /**************************************************
+ * Runtime/Compiler time conversiona
+ **************************************************/
+
+#define HTON16(A) (((A & 0x00FF) << 8) | ((A & 0xFF00) >> 8))
+#define NTOH16(A) (((A & 0x00FF) << 8) | ((A & 0xFF00) >> 8))
+
+/**************************************************
  * Cross-Platform Standard Library's
  **************************************************/
 
+#include <stdio.h>
 #include <stdint.h>
 
 /**************************************************
@@ -46,6 +54,12 @@
 #define enc28j60_delay_ms       _delay_ms
 
 #endif
+
+/**************************************************
+ * GCC Headers
+ **************************************************/
+
+#include <string.h>
 
 /**************************************************
  * Project headers
@@ -98,6 +112,33 @@ typedef enum {
     ENC28J60_PHLCON_LFRQ_LSTRCH
 } enc28j60_phlcon_lfrq_t;
 
+typedef enum
+{
+    ENC28J60_OK = 0,
+    ENC28J60_NO_PKT_AVAILABLE,
+} enc28j60_err_t;
+
+typedef struct __attribute__ (( packed ))
+{
+    uint16_t rbc;               /* Receive Byte-Count */
+    unsigned lede       : 1;    /* Logen Event / Drop Event */
+    unsigned reserved1  : 1;
+    unsigned ceps       : 1;    /* Carrier Event Previously Seen */
+    unsigned reserved2  : 1;
+    unsigned crcerr     : 1;    /* CRC Error */
+    unsigned lce        : 1;    /* Length Check Error */
+    unsigned loor       : 1;    /* Length Out of Range */
+    unsigned rok        : 1;    /* Received OK */
+    unsigned rmp        : 1;    /* Receive Multicast Packet */
+    unsigned rbp        : 1;    /* Receive Broadcast Packet */
+    unsigned dn         : 1;    /* Dribble Nibble ( LOL ) */
+    unsigned rcf        : 1;    /* Receive Control Frame */
+    unsigned rpcf       : 1;    /* Receive Pause Control Frame */
+    unsigned ruo        : 1;    /* Receive Unknown Opcode */
+    unsigned rvtd       : 1;    /* Receive VLAN Type Detected */
+    unsigned zero       : 1;
+} enc28j60_receive_status_vector_t;
+
 /**************************************************
  * Configuration
  **************************************************/
@@ -105,6 +146,7 @@ typedef enum {
 typedef struct
 {
     uint8_t mac[6];
+    uint8_t ipv4[4];
     /* Bit-Fields */
     unsigned full_duplex : 1;
 } enc28j60_driver_cfg_t;
@@ -113,55 +155,69 @@ typedef struct
  * Hardware Prototypes
  **************************************************/
 
-void        spi_init(void);
-uint8_t     spi_transceive(uint8_t b);
-void        spi_select(void);
-void        spi_deselect(void);
+void            spi_init(void);
+uint8_t         spi_transceive(uint8_t b);
+void            spi_select(void);
+void            spi_deselect(void);
 
 /**************************************************
  * Command Prototypes
  **************************************************/
 
-void        enc28j60_wcr(uint8_t reg, uint8_t val);
-void        enc28j60_wbm(uint8_t *data, uint16_t len);
+void            enc28j60_wcr(uint8_t reg, uint8_t val);
+void            enc28j60_wbm(uint8_t *data, uint16_t len);
 
-void        enc28j60_bfs(uint8_t reg, uint8_t mask);
-void        enc28j60_bfc(uint8_t reg, uint8_t mask);
+void            enc28j60_bfs(uint8_t reg, uint8_t mask);
+void            enc28j60_bfc(uint8_t reg, uint8_t mask);
 
-uint8_t     enc28j60_mii_rcr(uint8_t reg);
-uint8_t     enc28j60_eth_rcr(uint8_t reg);
+uint8_t         enc28j60_mii_rcr(uint8_t reg);
+uint8_t         enc28j60_eth_rcr(uint8_t reg);
+void            enc28j60_rbm(uint8_t *data, uint16_t len);
 
-void        enc28j60_src();
+void            enc28j60_src();
 
 /**************************************************
  * PHY Writing / Reading Prototypes
  **************************************************/
 
-void        enc28j60_phy_write(uint8_t reg, uint16_t value);
-uint16_t    enc28j60_phy_read(uint8_t reg);
+void            enc28j60_phy_write(uint8_t reg, uint16_t value);
+uint16_t        enc28j60_phy_read(uint8_t reg);
 
 /**************************************************
  * Prototypes
  **************************************************/
 
-void        enc28j60_init(enc28j60_driver_cfg_t *cfg);
-void        enc28j60_wait_clkrdy();
-void        enc28j60_mac_init();
-void        enc28j60_rx_init();
-void        enc28j60_filter_init();
-void        enc28j60_phy_init(enc28j60_driver_cfg_t *cfg);
+void            enc28j60_init(enc28j60_driver_cfg_t *cfg);
+void            enc28j60_wait_clkrdy();
+void            enc28j60_mac_init();
+void            enc28j60_rx_init();
+void            enc28j60_filter_init();
+void            enc28j60_phy_init(enc28j60_driver_cfg_t *cfg);
+void            enc28j60_rx_disable();
+void            enc28j60_rx_enable();
 
-void        enc28j60_bank_select(enc28j60_bank_t bank);
-void        enc28j60_write_mac(uint8_t *mac);
-void        enc28j60_read_mac(uint8_t *mac);
-void        enc28j60_mistat_wait_busy();
+void            enc28j60_bank_select(enc28j60_bank_t bank);
+void            enc28j60_write_mac(uint8_t *mac);
+void            enc28j60_read_mac(uint8_t *mac);
+void            enc28j60_mistat_wait_busy();
 
-void        enc28j60_enable_led_stretch();
-void        enc28j60_disable_led_stretch();
-void        enc28j60_set_led_stretch_time(enc28j60_phlcon_lfrq_t time);
-void        enc28j60_set_led_a_mode(enc28j60_phlcon_lacfg_t mode);
-void        enc28j60_set_led_b_mode(enc28j60_phlcon_lacfg_t mode);
+void            enc28j60_enable_led_stretch();
+void            enc28j60_disable_led_stretch();
+void            enc28j60_set_led_stretch_time(enc28j60_phlcon_lfrq_t time);
+void            enc28j60_set_led_a_mode(enc28j60_phlcon_lacfg_t mode);
+void            enc28j60_set_led_b_mode(enc28j60_phlcon_lacfg_t mode);
 
-void        enc28j60_write_packet(enc28j60_ethernet_packet_t *packet);
+uint8_t         enc28j60_get_packet_count();
+void            enc28j60_write_packet(enc28j60_ethernet_packet_t *packet, uint16_t len);
+enc28j60_err_t  enc28j60_read_packet(enc28j60_ethernet_packet_t *packet);
+
+void            enc28j60_prepare_ethernet_packet(enc28j60_driver_cfg_t *cfg, uint8_t *buffer);
+void            enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip);
+
+/**************************************************
+ * Data Printing Prototypes
+ **************************************************/
+
+void            print_mac(uint8_t *mac, FILE *ofstream);
 
 #endif

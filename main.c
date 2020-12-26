@@ -4,9 +4,11 @@
 #include "uart.h"
 
 #define MAC { 0xAA, 0xAA, 0xA4, 0x52, 0x37, 0x3C }
+#define IPV4 { 192, 168, 2, 188 }
 
 static enc28j60_driver_cfg_t cfg = {
     .mac = MAC,
+    .ipv4 = IPV4,
     .full_duplex = 1
 };
 
@@ -20,27 +22,29 @@ int main(void)
     // Initializes ENC28J60
     enc28j60_init(&cfg);
 
-    uint8_t macbuff[6];
-    enc28j60_read_mac(macbuff);
-    printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", macbuff[0], macbuff[1], macbuff[2], macbuff[3], macbuff[4], macbuff[5]);
+    // Resolves IP to mac
+    uint8_t arp_macbuff[6];
+    uint8_t arp_ipbuff[4] = { 192, 168, 2, 22 };
 
-    // Starts writing packets
-    uint8_t buffer[512];
+    _delay_ms(500);
+    enc28j60_send_arp(&cfg, arp_ipbuff);
+
+    uint8_t buffer[256];
     enc28j60_ethernet_packet_t *packet = (enc28j60_ethernet_packet_t *) buffer;
 
-    packet->cb.poverride = 0;
-
-    const char *message = "Who let the dogs out? WHoo WHoo WHoo!!";
-
-    packet->data.len = strlen(message) + 1; // String + Null Term
-    memcpy(packet->data.payload, message, packet->data.len);
-
-    memcpy(packet->data.da, broadcast, 6);
-    memcpy(packet->data.da, cfg.mac, 6);
-
+    uint16_t packet_count = 0;
     for (;;)
     {
-        enc28j60_write_packet(packet);
+        enc28j60_err_t e = enc28j60_read_packet(packet);
+        if (e == ENC28J60_NO_PKT_AVAILABLE) continue;
+
+        printf("\nNew packet[%u]:\n", packet_count++);
+        printf("DA: ");
+        print_mac(packet->data.da, stdout);
+        printf("\nSA: ");
+        print_mac(packet->data.sa, stdout);
+        printf("\n");
+
         _delay_ms(250);
     }
 }
