@@ -2,6 +2,7 @@
 #include "registers.h"
 
 static uint8_t __driver_pkt_buff[256];
+static uint8_t __driver_write_buff[256];
 
 /**************************************************
  * AVR Hardware Functions
@@ -15,8 +16,8 @@ void spi_init(void)
     SPI_DDR |= _BV(SPI_MOSI) | _BV(SPI_SCK) | _BV(SPI_SS);
 
     // Configure SPI Hardware
-    SPSR ^= SPSR;                                   // Clear SPCR
-    SPCR = _BV(MSTR) | _BV(SPE) | _BV(SPR0);        // Master & Enable & 1 Mhz
+    SPSR = _BV(SPI2X);                  // Clear SPCR
+    SPCR = _BV(MSTR) | _BV(SPE);        // Master & Enable & 1 Mhz
 }
 
 uint8_t spi_transceive(uint8_t b)
@@ -554,12 +555,6 @@ void enc28j60_write_packet(enc28j60_ethernet_packet_t *packet, uint16_t len)
     reg16 |= enc28j60_eth_rcr(ENC28J60_BK0_EWRPTL);
     reg16 -= 1;
 
-    /*
-    printf("Start: %u\n", ENC28J60_TXBUFF_START);
-    printf("End: %u\n", reg16);
-    printf("Diff: %u\n", reg16 - ENC28J60_TXBUFF_START);
-    */
-
     // Stores the address inside the ETXND pointer
 
     enc28j60_wcr(ENC28J60_BK0_ETXNDL, (uint8_t) reg16);
@@ -636,6 +631,42 @@ enc28j60_err_t enc28j60_read_packet(enc28j60_ethernet_packet_t *packet)
 }
 
 
+void enc28j60_send_udp(enc28j60_driver_cfg_t *cfg, uint16_t port, uint16_t len, uint8_t *data, uint8_t *ipv4, uint8_t *mac)
+{
+    // Creates the ethernet packet
+    enc28j60_ethernet_packet_t *packet = (enc28j60_udp_packet_t *) __driver_write_buff;
+    packet->data.type = HTON16(ENC28J60_ETHERNET_PACKET_TYPE_IPV4);
+    memcpy(packet->data.da, mac, 6);
+    memcpy(packet->data.sa, cfg->mac, 6);
+
+    // Creates the IP header
+    enc28j60_ip_hdr_t *ip_hdr = (enc28j60_ip_hdr_t *) packet->data.payload;
+    ip_hdr->ihl = 5;
+    ip_hdr->ttl = 60;
+    ip_hdr->proto = HTON16(ENC28J60_IP_PROTO_UDP);
+    ip_hdr->ver = 4;
+    ip_hdr->tos.precedence = ENC28J60_IP_TOS_PRECEDENCE_ROUTINE;
+    ip_hdr->flags = _BV(ENC28J60_IP_FLAGS_DONT_FRAGMENT);
+    ip_hdr->tos.d = 0;
+    ip_hdr->tos.r = 0;
+    ip_hdr->tos.t = 0;
+    ip_hdr->flags = 0;
+    ip_hdr->tl = (ip_hdr->ihl * 4) + len;
+
+    memcpy(ip_hdr->sa, cfg->ipv4, 4);
+    memcpy(ip_hdr->da, ipv4, 4);
+
+    // Creates the UDP packet
+    enc28j60_udp_packet_t *udp_packet = (enc28j60_udp_packet_t *) &packet->data.payload[ip_hdr->ihl * 4];
+    udp_packet->l = HTON16(len);
+    udp_packet->dp = HTON16(port);
+    udp_packet->sp = 0x0000;
+    memcpy(udp_packet->payload, data, len);
+
+    // Writes the UDP packet
+    enc28j60_write_packet(packet, ip_hdr->tl);
+}
+
 void enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip)
 {
     enc28j60_ethernet_packet_t *ethernet_packet = (enc28j60_ethernet_packet_t *) __driver_pkt_buff;
@@ -662,6 +693,67 @@ void enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip)
 
     // Sends the packet
     enc28j60_write_packet(ethernet_packet, sizeof (enc28j60_arp_packet_t));
+}
+
+void enc28j60_event_poll(enc28j60_driver_cfg_t *cfg)
+{
+ // Reads an packet if possible
+    enc28j60_ethernet_packet_t *packet = enc28j60_get_buffer();
+    enc28j60_err_t e = enc28j60_read_packet(packet);
+    if (e == ENC28J60_NO_PKT_AVAILABLE) return;
+
+    // Checks the packet type
+    switch (HTON16(packet->data.type))
+    {
+        // Handles ARP requests
+        case ENC28J60_ETHERNET_PACKET_TYPE_ARP:
+        {
+            enc28j60_arp_packet_t *arp_packet = (enc28j60_arp_packet_t *) packet->data.payload; 
+
+            // Checks if the ARP packet is an request, if so
+            //  we will check if it is about us, and response
+            //  with our MAC
+            if (NTOH16(arp_packet->op) != ENC28J60_ARP_PACKET_OP_REQUEST) break;
+            else if (arp_packet->hln != 6 || arp_packet->pln != 4) break;
+            else if (NTOH16(arp_packet->hrd) != 0x0001 || NTOH16(arp_packet->pro) != 0x0800) break;
+            else if (memcmp(arp_packet->tpa, cfg->ipv4, 4) != 0) break;
+            
+            printf("Responding to ARP Request of: ");
+            print_mac(arp_packet->sha, stdout);
+            printf("\n");
+
+            // Prepares the ARP Response, by setting the opcode to reply
+            //  after which we copy the source to target addresses, and
+            //  put our data in the source ones
+            arp_packet->op = HTON16(ENC28J60_ARP_PACKET_OP_REPLY);
+
+            memcpy(arp_packet->tha, arp_packet->sha, 6);
+            memcpy(arp_packet->tpa, arp_packet->spa, 4);
+
+            memcpy(arp_packet->spa, cfg->ipv4, 4);
+            memcpy(arp_packet->sha, cfg->mac, 6);
+
+            // Sends the response packet
+            enc28j60_write_packet(packet, sizeof (enc28j60_arp_packet_t));
+            break;
+        }
+        case ENC28J60_ETHERNET_PACKET_TYPE_IPV4:
+        {
+            enc28j60_ip_hdr_t *ip_hdr = (enc28j60_ip_hdr_t *) packet->data.payload;
+            switch (ip_hdr->proto)
+            {
+                case ENC28J60_IP_PROTO_UDP:
+                {
+                    enc28j60_udp_packet_t *udp_packet = (enc28j60_udp_packet_t *) &packet->data.payload[ip_hdr->ihl * 4];
+                    cfg->udp_callback(NTOH16(udp_packet->dp), NTOH16(udp_packet->l), udp_packet->payload);
+                    break;
+                }
+            }
+
+            break;
+        }
+        default: break;
+    }
 }
 
 /**************************************************

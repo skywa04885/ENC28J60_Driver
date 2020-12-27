@@ -67,6 +67,8 @@
  **************************************************/
 
 #include "ethernet.h"
+#include "ip.h"
+#include "udp.h"
 
 /**************************************************
  * Hardware Types
@@ -148,6 +150,8 @@ typedef struct
 {
     uint8_t mac[6];
     uint8_t ipv4[4];
+    /* Callbaks */
+    void (*udp_callback)(uint16_t, uint16_t, uint8_t *);
     /* Bit-Fields */
     unsigned full_duplex : 1;
 } enc28j60_driver_cfg_t;
@@ -217,6 +221,8 @@ enc28j60_err_t  enc28j60_read_packet(enc28j60_ethernet_packet_t *packet);
 
 void            enc28j60_prepare_ethernet_packet(enc28j60_driver_cfg_t *cfg, uint8_t *buffer);
 void            enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip);
+void            enc28j60_send_udp(enc28j60_driver_cfg_t *cfg, uint16_t port, uint16_t len, uint8_t *data, uint8_t *ipv4, uint8_t *mac);
+void            enc28j60_event_poll(enc28j60_driver_cfg_t *cfg);
 
 /**************************************************
  * Data Printing Prototypes

@@ -54,8 +54,4 @@ typedef struct __attribute__ (( packed ))
     uint8_t     tpa[4];     /* Protocol Address of target */
 } enc28j60_arp_packet_t;
 
-/**************************************************
- * OSI Layer 3 / IP
- **************************************************/
-
 #endif

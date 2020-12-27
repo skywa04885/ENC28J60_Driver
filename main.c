@@ -2,10 +2,18 @@
 #include <avr/wdt.h>
 #include "enc28j60/driver.h"
 #include "enc28j60/registers.h"
+#include "enc28j60/ip.h"
+#include "enc28j60/udp.h"
 #include "uart.h"
 
 #define MAC { 0xAA, 0xAA, 0xA4, 0x52, 0x37, 0x3C }
 #define IPV4 { 192, 168, 2, 188 }
+
+/**************************************************
+ * Callbacks
+ **************************************************/
+
+void udp_callback(uint16_t port, uint16_t len, uint8_t *data);
 
 /**************************************************
  * Driver configuration
@@ -14,6 +22,7 @@
 static enc28j60_driver_cfg_t cfg = {
     .mac = MAC,
     .ipv4 = IPV4,
+    .udp_callback = udp_callback,
     .full_duplex = 1
 };
 
@@ -27,6 +36,20 @@ static volatile uint8_t target_ip[4] = { 192, 168, 2, 1 };
 /**************************************************
  * Functions
  **************************************************/
+
+void udp_callback(uint16_t port, uint16_t len, uint8_t *data)
+{
+    switch (port)
+    {
+        // The UDP Echo port
+        case 4004:
+        {
+            printf("Echo packet: %s\n", data);
+            enc28j60_send_udp(&cfg, 4004, 5, "Hey!", target_ip, target_mac);
+            break;
+        }
+    }
+}
 
 void main_setup(void)
 {
@@ -77,7 +100,7 @@ void main_setup(void)
 
 void main_loop(void)
 {
-
+   enc28j60_event_poll(&cfg);
 }
 
 int main(void)
