@@ -1,4 +1,5 @@
 #include <string.h>
+#include <avr/wdt.h>
 #include "enc28j60/driver.h"
 #include "enc28j60/registers.h"
 #include "uart.h"
@@ -6,45 +7,81 @@
 #define MAC { 0xAA, 0xAA, 0xA4, 0x52, 0x37, 0x3C }
 #define IPV4 { 192, 168, 2, 188 }
 
+/**************************************************
+ * Driver configuration
+ **************************************************/
+
 static enc28j60_driver_cfg_t cfg = {
     .mac = MAC,
     .ipv4 = IPV4,
     .full_duplex = 1
 };
 
-static uint8_t broadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+/**************************************************
+ * Static variables
+ **************************************************/
 
-int main(void)
+static volatile uint8_t target_mac[6];
+static volatile uint8_t target_ip[4] = { 192, 168, 2, 1 };
+
+/**************************************************
+ * Functions
+ **************************************************/
+
+void main_setup(void)
 {
-    // Initializes UART
     uart_init();
-
-    // Initializes ENC28J60
     enc28j60_init(&cfg);
 
-    // Resolves IP to mac
-    uint8_t arp_macbuff[6];
-    uint8_t arp_ipbuff[4] = { 192, 168, 2, 22 };
+    // Waits for the LINK UP
+    printf("LINK awaiting ..\n");
+    while (!enc28j60_is_link_up());
+    printf("LINK up, proceeding ..\n");
 
-    _delay_ms(500);
-    enc28j60_send_arp(&cfg, arp_ipbuff);
-
-    uint8_t buffer[256];
-    enc28j60_ethernet_packet_t *packet = (enc28j60_ethernet_packet_t *) buffer;
-
-    uint16_t packet_count = 0;
-    for (;;)
+    // Resolves the MAC Address of the target IP
+    printf("ARP For %u.%u.%u.%u sent\n", target_ip[0], target_ip[1], target_ip[2], target_ip[3]);
+    enc28j60_send_arp(&cfg, target_ip);
+    enc28j60_ethernet_packet_t *packet = enc28j60_get_buffer();
+    for (uint16_t i = 0; i < 500; ++i)
     {
+        _delay_ms(10);
+
+        // Attempts to read packet, if there is no packet available
+        //  we will proceed to the next loop
         enc28j60_err_t e = enc28j60_read_packet(packet);
         if (e == ENC28J60_NO_PKT_AVAILABLE) continue;
 
-        printf("\nNew packet[%u]:\n", packet_count++);
-        printf("DA: ");
-        print_mac(packet->data.da, stdout);
-        printf("\nSA: ");
-        print_mac(packet->data.sa, stdout);
-        printf("\n");
+        // Reads the packet, and checks if it is meant for us,
+        //  and if the type is correct, else just continue to next iteration
+        if (memcmp(packet->data.da, cfg.mac, 6) != 0) continue;
+        else if (NTOH16(packet->data.type) != ENC28J60_ETHERNET_PACKET_TYPE_ARP) continue;
 
-        _delay_ms(250);
+        // Checks the ARP Packet, and if the ARP thing is an reply, if so
+        //  we know that we've received the mac
+        enc28j60_arp_packet_t *arp_packet = (enc28j60_arp_packet_t *) packet->data.payload;
+        if (NTOH16(arp_packet->op) != ENC28J60_ARP_PACKET_OP_REPLY) continue;
+
+        // Reads the MAC from the packet, and returns from setup
+        memcpy(target_mac, arp_packet->sha, 6);
+        printf("ARP Reply MAC: ");
+        print_mac(target_mac, stdout);
+        printf("\n");
+        return;
     }
+
+    // Since the ARP response failed, print error and restart
+    //  AVR device
+    printf("ARP Failed, reboot\n");
+    ((void (*)()) 0x0000)();
+}
+
+void main_loop(void)
+{
+
+}
+
+int main(void)
+{
+    main_setup();
+    for (;;) main_loop();
 }

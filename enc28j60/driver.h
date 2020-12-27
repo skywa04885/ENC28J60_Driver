@@ -25,7 +25,7 @@
  **************************************************/
 
 #define HTON16(A) (((A & 0x00FF) << 8) | ((A & 0xFF00) >> 8))
-#define NTOH16(A) (((A & 0x00FF) << 8) | ((A & 0xFF00) >> 8))
+#define NTOH16(A) HTON16(A)
 
 /**************************************************
  * Cross-Platform Standard Library's
@@ -33,6 +33,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /**************************************************
  * AVR Device Support
@@ -187,6 +188,8 @@ uint16_t        enc28j60_phy_read(uint8_t reg);
  * Prototypes
  **************************************************/
 
+uint8_t *       enc28j60_get_buffer();
+
 void            enc28j60_init(enc28j60_driver_cfg_t *cfg);
 void            enc28j60_wait_clkrdy();
 void            enc28j60_mac_init();
@@ -200,6 +203,7 @@ void            enc28j60_bank_select(enc28j60_bank_t bank);
 void            enc28j60_write_mac(uint8_t *mac);
 void            enc28j60_read_mac(uint8_t *mac);
 void            enc28j60_mistat_wait_busy();
+bool            enc28j60_is_link_up(void);
 
 void            enc28j60_enable_led_stretch();
 void            enc28j60_disable_led_stretch();

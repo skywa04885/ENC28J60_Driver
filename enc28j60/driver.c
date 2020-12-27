@@ -207,6 +207,11 @@ uint16_t enc28j60_phy_read(uint8_t reg)
  * Functions
  **************************************************/
 
+uint8_t *enc28j60_get_buffer()
+{
+    return __driver_pkt_buff;
+}
+
 void enc28j60_init(enc28j60_driver_cfg_t *cfg)
 {
     // Configure ENC28J60 GPIO's
@@ -238,6 +243,11 @@ void enc28j60_init(enc28j60_driver_cfg_t *cfg)
 
     // Enables RX
     enc28j60_rx_enable();
+}
+
+bool enc28j60_is_link_up()
+{
+    return (enc28j60_phy_read(ENC28J60_PHY_PHSTAT2) & _BV(ENC28J60_PHY_PHSTAT2_LSTAT));
 }
 
 void enc28j60_wait_clkrdy()
@@ -608,21 +618,19 @@ enc28j60_err_t enc28j60_read_packet(enc28j60_ethernet_packet_t *packet)
     enc28j60_wcr(ENC28J60_BK0_ERDPTL, (uint8_t) rx_buffer_rp);
     enc28j60_wcr(ENC28J60_BK0_ERDPTH, (uint8_t) (rx_buffer_rp >> 8));
 
-    printf("%u\n", rx_buffer_rp);
-
-    printf("%u\n", enc28j60_eth_rcr(ENC28J60_BK0_ERDPTL));
-    printf("%u\n", enc28j60_eth_rcr(ENC28J60_BK0_ERDPTH));
-
     // Read the headers, the next packet pointer, and the status vector
     enc28j60_rbm((uint8_t *) &next_packet_pointer, 2);
     enc28j60_rbm((uint8_t *) &status_vec, sizeof (enc28j60_receive_status_vector_t));
-    printf("Next packet pointer: %u\n", next_packet_pointer);
-    printf("Data size: %u\n", status_vec.rbc);
 
     // Reads the body
-    enc28j60_rbm(packet->data.payload, status_vec.rbc);
+    enc28j60_rbm((uint8_t *) &packet->data, status_vec.rbc);
 
-    for (;;);
+    // Frees the buffer space we've just read, by incrementing the packet
+    //  read pointer, and write 1 to ECON2.PKTDEC in order to decrease the packet count
+    enc28j60_wcr(ENC28J60_BK0_ERXRDPTL, (uint8_t) next_packet_pointer);
+    enc28j60_wcr(ENC28J60_BK0_ERXRDPTH, (uint8_t) (next_packet_pointer >> 8));
+
+    enc28j60_bfs(ECON2, _BV(ECON2_PKTDEC));
 
     return ENC28J60_OK;
 }
