@@ -69,6 +69,7 @@
 #include "ethernet.h"
 #include "ip.h"
 #include "udp.h"
+#include "checksum.h"
 
 /**************************************************
  * Hardware Types

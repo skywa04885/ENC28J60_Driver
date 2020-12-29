@@ -6,6 +6,7 @@
  **************************************************/
 
 #include <stdio.h>
+#include <math.h>
 
 /**************************************************
  * Datatypes
@@ -68,8 +69,7 @@ typedef struct __attribute__ (( packed ))
     enc28j60_ip_tos_t   tos;            /* Type of service */
     uint16_t            tl;             /* Total Length */
     uint16_t            id;             /* Identification */
-    unsigned            flags   : 3;    /* Flags */
-    unsigned            fragof  : 13;   /* Fragment Offset */
+    uint16_t            f;              /* Flags & Fragment Offset */
     uint8_t             ttl;            /* Time To Live */
     uint8_t             proto;          /* Protocol */
     uint16_t            hdr_cs;         /* Header Checksum */

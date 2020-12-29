@@ -633,6 +633,13 @@ enc28j60_err_t enc28j60_read_packet(enc28j60_ethernet_packet_t *packet)
 
 void enc28j60_send_udp(enc28j60_driver_cfg_t *cfg, uint16_t port, uint16_t len, uint8_t *data, uint8_t *ipv4, uint8_t *mac)
 {
+    // Padds the payload
+    if ((len % 2) != 0)
+    {
+        data[len] = 0x00;
+        ++len;
+    }
+
     // Creates the ethernet packet
     enc28j60_ethernet_packet_t *packet = (enc28j60_udp_packet_t *) __driver_write_buff;
     packet->data.type = HTON16(ENC28J60_ETHERNET_PACKET_TYPE_IPV4);
@@ -641,30 +648,39 @@ void enc28j60_send_udp(enc28j60_driver_cfg_t *cfg, uint16_t port, uint16_t len, 
 
     // Creates the IP header
     enc28j60_ip_hdr_t *ip_hdr = (enc28j60_ip_hdr_t *) packet->data.payload;
+
     ip_hdr->ihl = 5;
-    ip_hdr->ttl = 60;
-    ip_hdr->proto = HTON16(ENC28J60_IP_PROTO_UDP);
     ip_hdr->ver = 4;
-    ip_hdr->tos.precedence = ENC28J60_IP_TOS_PRECEDENCE_ROUTINE;
-    ip_hdr->flags = _BV(ENC28J60_IP_FLAGS_DONT_FRAGMENT);
-    ip_hdr->tos.d = 0;
-    ip_hdr->tos.r = 0;
-    ip_hdr->tos.t = 0;
-    ip_hdr->flags = 0;
-    ip_hdr->tl = (ip_hdr->ihl * 4) + len;
+
+    ip_hdr->tos.zero = 0;
+    ip_hdr->tos.t = ip_hdr->tos.r = ip_hdr->tos.d = 0;
+    ip_hdr->tos.precedence = ENC28J60_IP_TOS_PRECEDENCE_PRIORITY;
+
+    ip_hdr->tl = HTON16((ip_hdr->ihl * 4) + sizeof (enc28j60_udp_packet_t) + len);
+
+    ip_hdr->id = 0;
+    ip_hdr->f = HTON16(((uint16_t) _BV(ENC28J60_IP_FLAGS_DONT_FRAGMENT)) << 13);
+    ip_hdr->ttl = 60;
+
+    ip_hdr->proto = ENC28J60_IP_PROTO_UDP;
 
     memcpy(ip_hdr->sa, cfg->ipv4, 4);
     memcpy(ip_hdr->da, ipv4, 4);
 
+    ip_hdr->hdr_cs = 0;
+    ip_hdr->hdr_cs = checksum_oc16((uint16_t *) ip_hdr, ip_hdr->ihl * 2);
+
     // Creates the UDP packet
     enc28j60_udp_packet_t *udp_packet = (enc28j60_udp_packet_t *) &packet->data.payload[ip_hdr->ihl * 4];
-    udp_packet->l = HTON16(len);
+    memset(udp_packet, 0, sizeof (enc28j60_udp_packet_t));
+    udp_packet->l = HTON16(sizeof (enc28j60_udp_packet_t) + len);
     udp_packet->dp = HTON16(port);
     udp_packet->sp = 0x0000;
+    udp_packet->cs = enc28j60_udp_calc_cs(ip_hdr, udp_packet);
     memcpy(udp_packet->payload, data, len);
 
     // Writes the UDP packet
-    enc28j60_write_packet(packet, ip_hdr->tl);
+    enc28j60_write_packet(packet, NTOH16(ip_hdr->tl));
 }
 
 void enc28j60_send_arp(enc28j60_driver_cfg_t *cfg, uint8_t *ip)
@@ -740,6 +756,13 @@ void enc28j60_event_poll(enc28j60_driver_cfg_t *cfg)
         case ENC28J60_ETHERNET_PACKET_TYPE_IPV4:
         {
             enc28j60_ip_hdr_t *ip_hdr = (enc28j60_ip_hdr_t *) packet->data.payload;
+
+            if (checksum_oc16((uint16_t *) ip_hdr, ip_hdr->ihl * 2) != 0xFFFFU)
+            {
+                printf("Invalid IP Checksum\n");
+                break;
+            }
+
             switch (ip_hdr->proto)
             {
                 case ENC28J60_IP_PROTO_UDP:

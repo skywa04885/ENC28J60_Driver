@@ -1,6 +1,6 @@
 MCU := atmega328p
 PROGRAMMER := usbasp
-MODULES := enc28j60/driver.o uart.o
+MODULES := enc28j60/driver.o uart.o enc28j60/ip.c enc28j60/udp.c enc28j60/checksum.c
 OUTPUT := main.elf
 HEXOUT := main.ihex
 
